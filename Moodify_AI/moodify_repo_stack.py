@@ -26,7 +26,9 @@ class ConfigClass:
         self.env = env
         self.account_no: str = data.get("account_no")
         self.region: str = data.get("region")
-        print(f"[Config] Environment '{self.env}' initialized.")
+        self.spotify_client_id = data.get("spotify_client_id")
+        self.spotify_client_secret = data.get("spotify_client_secret")
+
 
 
 with open("env_parameters.json") as env_file:
@@ -154,6 +156,8 @@ class MoodifyRepoStack(Stack):
             log_group=log_group,           # bind the explicit log group
             environment={
                 "S3_BUCKET_NAME": moodify_bucket.bucket_name,
+                "SPOTIFY_CLIENT_ID": Config.spotify_client_id,
+                "SPOTIFY_CLIENT_SECRET": Config.spotify_client_secret,
             },
             layers=[requests_lib_lambda_layer]
         )

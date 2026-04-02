@@ -1,6 +1,7 @@
 import json
 import requests
 import base64
+import os
 
 
 # ─────────────────────────────────────────────
@@ -134,8 +135,8 @@ def map_mood(mood, mood_text, genres, preferences):
 # STEP 3 — Get Spotify access token
 # ─────────────────────────────────────────────
 def get_spotify_token():
-    client_id     = ""
-    client_secret = ""
+    client_id     = os.environ["SPOTIFY_CLIENT_ID"]
+    client_secret = os.environ["SPOTIFY_CLIENT_SECRET"]
 
     b64_auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
 
@@ -252,6 +253,7 @@ def lambda_handler(event, context):
     print("=" * 60)
     print("🚀 [HANDLER] Lambda invoked")
     print(f"📥 [HANDLER] Raw event: {json.dumps(event)}")
+   
 
     # Handle CORS preflight
     if event.get("httpMethod") == "OPTIONS":
