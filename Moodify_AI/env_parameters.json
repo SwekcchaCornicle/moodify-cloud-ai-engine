@@ -1,7 +1,9 @@
 {
   "dev": {
     "account_number": "630596767812",
-    "region": "ap-south-1"
+    "region": "ap-south-1",
+    "client_id": "c36c98fea3114927a15ca3965e6c1c92",
+    "client_secret":"7ffea3d6b03448dc87fb2c5e6f4d2e7d"
     
   }
 }

@@ -134,8 +134,8 @@ def map_mood(mood, mood_text, genres, preferences):
 # STEP 3 — Get Spotify access token
 # ─────────────────────────────────────────────
 def get_spotify_token():
-    client_id     = "c36c98fea3114927a15ca3965e6c1c92"
-    client_secret = "7ffea3d6b03448dc87fb2c5e6f4d2e7d"
+    client_id     = ""
+    client_secret = ""
 
     b64_auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
 
