@@ -1,66 +1,116 @@
 import json
 from aws_cdk import (
     Stack,
+    Duration,
+    CfnOutput,
     aws_iam as iam,
     aws_s3 as s3,
+    aws_ssm as ssm,
     aws_lambda as _lambda,
-    Duration,
+    aws_apigateway as apigateway,
+    aws_logs as logs,
 )
 from constructs import Construct
 
-environment = "dev"
+# ─────────────────────────────────────────────
+# Environment & Configuration
+# ─────────────────────────────────────────────
+
+ENVIRONMENT = "dev"
+
 
 class ConfigClass:
-    def __init__(self, env, data):
+    """Loads and holds environment-specific configuration."""
+
+    def __init__(self, env: str, data: dict):
         self.env = env
-        self.account_no = data.get("account_no")
-        self.region = data.get("region")
-        print("env initialize")
+        self.account_no: str = data.get("account_no")
+        self.region: str = data.get("region")
+        print(f"[Config] Environment '{self.env}' initialized.")
 
-# Load data from the environment file
+
 with open("env_parameters.json") as env_file:
-    data = json.load(env_file)
+    _env_data = json.load(env_file)
 
-Config = ConfigClass(environment, data)
+Config = ConfigClass(ENVIRONMENT, _env_data)
+
+
+# ─────────────────────────────────────────────
+# Stack
+# ─────────────────────────────────────────────
 
 class MoodifyRepoStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        aws_account = Config.account_no
-        aws_region = Config.region
-
-        # Create S3 bucket
-        moodify_s3_bucket = s3.Bucket(
+        # ── S3 Bucket ──────────────────────────────────────────────────────────
+        moodify_bucket = s3.Bucket(
             self,
-            "NxpDataLoaderBucket",
+            "MoodifyS3Bucket",
             bucket_name="moodify-s3-bucket",
             enforce_ssl=True,
         )
 
-        # Create Lambda role
-        lambda_role = iam.Role(
+        # ── CloudWatch Log Group ───────────────────────────────────────────────
+        log_group = logs.LogGroup(
             self,
-            "NxpDataLoaderLambdaRole",
-            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-            role_name="moodify-lambda-role"
+            "MoodifyLambdaLogGroup",
+            log_group_name="/aws/lambda/mood_analyzer",
+            retention=logs.RetentionDays.ONE_MONTH,
         )
 
-        # Attach inline policy
+        # ── IAM Role for Lambda ────────────────────────────────────────────────
+        lambda_role = iam.Role(
+            self,
+            "MoodifyLambdaRole",
+            role_name="moodify-lambda-role",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+
+           # create a lambda layer with requests python library
+        requests_lib_lambda_layer = _lambda.LayerVersion(
+            self,
+            "RequestsLibLayer",
+            code=_lambda.Code.from_asset(
+                "Moodify_AI\request_layer\python\requests.zip"
+            ),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            description="Lambda layer with python library requests to create snow tickets",
+            layer_version_name="requests_lib_layer",
+        )
+
+        # store requests layer version arn in ssm parameter to be accessible by other stacks
+        ssm.StringParameter(
+            self,
+            "RequestsLibLayerVersionParam",
+            description="Requests Lib Layer version arn",
+            parameter_name="requests_lib_layer_version_arn",
+            string_value=requests_lib_lambda_layer.layer_version_arn,
+            tier=ssm.ParameterTier.STANDARD,
+        )
+
+        
+        # retrieve requests layer version version arn
+        request_layer_version_arn = (
+            ssm.StringParameter.from_string_parameter_attributes(
+                self,
+                "NxpRequestsLayerArn",
+                parameter_name="requests_lib_layer_version_arn",
+            ).string_value
+        )
+
+        requests_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self, "NxpRequestsLambdaLayerVersion", request_layer_version_arn
+        )
+
         lambda_role.attach_inline_policy(
             iam.Policy(
                 self,
-                "NxpDataLoaderLambdaRolePolicy",
+                "MoodifyLambdaPolicy",
                 statements=[
+                    # S3 permissions
                     iam.PolicyStatement(
-                        actions=[
-                            "logs:CreateLogGroup",
-                            "logs:CreateLogStream",
-                            "logs:PutLogEvents",
-                        ],
-                        resources=[f"arn:aws:logs:{aws_region}:{aws_account}:*"],
-                    ),
-                    iam.PolicyStatement(
+                        sid="S3Access",
                         actions=[
                             "s3:GetObject",
                             "s3:PutObject",
@@ -68,16 +118,43 @@ class MoodifyRepoStack(Stack):
                             "s3:DeleteObject",
                         ],
                         resources=[
-                            f"{moodify_s3_bucket.bucket_arn}/*",
-                            moodify_s3_bucket.bucket_arn,
+                            moodify_bucket.bucket_arn,
+                            f"{moodify_bucket.bucket_arn}/*",
+                        ],
+                    ),
+
+                    # CloudWatch Logs permissions
+                    iam.PolicyStatement(
+                        sid="CloudWatchLogsAccess",
+                        actions=[
+                            "logs:CreateLogGroup",
+                            "logs:CreateLogStream",
+                            "logs:PutLogEvents",
+                            "logs:DescribeLogStreams",
+                        ],
+                        resources=[
+                            log_group.log_group_arn,
+                            f"{log_group.log_group_arn}:log-stream:*",
+                        ],
+                    ),
+
+                    # ✅ SSM Parameter Store Access (FIXED)
+                    iam.PolicyStatement(
+                        sid="SSMParameterAccess",
+                        actions=[
+                            "ssm:GetParameter",
+                            "ssm:GetParameters"
+                        ],
+                        resources=[
+                            f"arn:aws:ssm:{self.region}:{self.account}:parameter/*"
                         ],
                     ),
                 ],
             )
         )
 
-        # Create Lambda function
-        _lambda.Function(
+        # ── Lambda Function ────────────────────────────────────────────────────
+        mood_lambda = _lambda.Function(
             self,
             "MoodAnalyzerLambda",
             function_name="mood_analyzer",
@@ -85,8 +162,33 @@ class MoodifyRepoStack(Stack):
             handler="mood_analyzer.lambda_handler",
             code=_lambda.Code.from_asset("lambdas/mood_analyzer"),
             timeout=Duration.minutes(15),
-            role=lambda_role,  # ✅ comma added
-            environment={      # ✅ now valid
-                "s3_bucket_name": moodify_s3_bucket.bucket_name,
+            role=lambda_role,
+            log_group=log_group,           # bind the explicit log group
+            environment={
+                "S3_BUCKET_NAME": moodify_bucket.bucket_name,
             },
+            layers=[requests_layer]
         )
+
+        # ── API Gateway ────────────────────────────────────────────────────────
+        api = apigateway.RestApi(
+            self,
+            "MoodifyRestApi",
+            rest_api_name="moodify-api",
+            default_cors_preflight_options=apigateway.CorsOptions(
+                allow_origins=apigateway.Cors.ALL_ORIGINS,
+                allow_methods=["POST", "OPTIONS"],
+                allow_headers=["Content-Type"],
+            ),
+        )
+
+        playlist_resource = api.root.add_resource("playlist")
+        playlist_resource.add_method(
+            "POST",
+            apigateway.LambdaIntegration(mood_lambda),
+        )
+
+        # ── Outputs ────────────────────────────────────────────────────────────
+        CfnOutput(self, "ApiUrl", value=api.url)
+        CfnOutput(self, "LogGroupName", value=log_group.log_group_name)
+        CfnOutput(self, "S3BucketName", value=moodify_bucket.bucket_name)
