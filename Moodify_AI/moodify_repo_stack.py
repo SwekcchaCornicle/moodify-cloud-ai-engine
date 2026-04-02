@@ -72,7 +72,7 @@ class MoodifyRepoStack(Stack):
             self,
             "RequestsLibLayer",
             code=_lambda.Code.from_asset(
-                "Moodify_AI\request_layer\python\requests.zip"
+                "request_layer/python/requests.zip"
             ),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
             description="Lambda layer with python library requests to create snow tickets",
@@ -90,18 +90,6 @@ class MoodifyRepoStack(Stack):
         )
 
         
-        # retrieve requests layer version version arn
-        request_layer_version_arn = (
-            ssm.StringParameter.from_string_parameter_attributes(
-                self,
-                "NxpRequestsLayerArn",
-                parameter_name="requests_lib_layer_version_arn",
-            ).string_value
-        )
-
-        requests_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, "NxpRequestsLambdaLayerVersion", request_layer_version_arn
-        )
 
         lambda_role.attach_inline_policy(
             iam.Policy(
@@ -167,7 +155,7 @@ class MoodifyRepoStack(Stack):
             environment={
                 "S3_BUCKET_NAME": moodify_bucket.bucket_name,
             },
-            layers=[requests_layer]
+            layers=[requests_lib_lambda_layer]
         )
 
         # ── API Gateway ────────────────────────────────────────────────────────
